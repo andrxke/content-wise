@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "ContentWise",
+  "version": "1.0",
+  "description": "Monitors tab content and predicts student cognitive state (Focus vs. Lured). Runs fully locally.",
+  "permissions": [
+    "activeTab",
+    "tabCapture",
+    "offscreen",
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8000/*",
+    "http://localhost:8000/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  }
+}

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+  <title>ContentWise Dashboard</title>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>ContentWise</h1>
+      <button id="capture-btn" title="Manual Capture">● REC</button>
+    </header>
+    
+    <div class="settings-row">
+      <label for="interval-select">Record Freq:</label>
+      <select id="interval-select">
+        <option value="manual">Manual Only</option>
+        <option value="1">Every 1 min</option>
+        <option value="3">Every 3 mins</option>
+        <option value="5">Every 5 mins</option>
+      </select>
+    </div>
+
+    <div class="status-card" id="status-card">
+      <div id="status-icon" class="icon-circle">...</div>
+      <h2 id="focus-state-title">Waiting...</h2>
+      <p id="confidence-text">No data yet</p>
+    </div>
+
+    <div class="metrics">
+      <h3>Network Activation</h3>
+      <div class="bar-container">
+        <label>Executive (Focus)</label>
+        <div class="bar"><div id="bar-focus" class="fill fill-focus" style="width: 0%;"></div></div>
+      </div>
+      <div class="bar-container">
+        <label>Salience (Lured)</label>
+        <div class="bar"><div id="bar-lured" class="fill fill-lured" style="width: 0%;"></div></div>
+      </div>
+      <div class="bar-container">
+        <label>Default Mode (Distracted)</label>
+        <div class="bar"><div id="bar-distracted" class="fill fill-distracted" style="width: 0%;"></div></div>
+      </div>
+    </div>
+
+    <div class="regions">
+      <h3>Top Activated Brain Regions</h3>
+      <p id="top-regions-list" class="regions-list">None</p>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
