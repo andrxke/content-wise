@@ -16,13 +16,11 @@ async function startRecording(streamId, durationMs) {
     throw new Error('Called startRecording while recording is in progress.');
   }
 
+  // Capture video only — no audio tracks.
+  // This means the tab's audio is never intercepted, so YouTube/etc.
+  // keeps playing normally without any passthrough hack.
   const mediaStream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      mandatory: {
-        chromeMediaSource: 'tab',
-        chromeMediaSourceId: streamId
-      }
-    },
+    audio: false,
     video: {
       mandatory: {
         chromeMediaSource: 'tab',
@@ -31,7 +29,7 @@ async function startRecording(streamId, durationMs) {
     }
   });
 
-  // Record as WebM
+  // Record as WebM (video only, no audio codec needed)
   recorder = new MediaRecorder(mediaStream, { mimeType: 'video/webm' });
   
   recorder.ondataavailable = (event) => {
@@ -42,6 +40,7 @@ async function startRecording(streamId, durationMs) {
 
   recorder.onstop = () => {
     mediaStream.getTracks().forEach((t) => t.stop());
+
     const blob = new Blob(data, { type: 'video/webm' });
     
     // Read the blob into a data URL so we can pass it back to the service worker

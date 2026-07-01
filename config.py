@@ -7,7 +7,7 @@ CACHE_DIR = ROOT_DIR / "cache"
 
 # TribeV2 settings
 MODEL_ID = "facebook/tribev2"
-DEVICE = "cpu" # Switched to CPU because the Transformers audio extractor fails on MPS
+DEVICE = "mps"  # Apple Silicon GPU — audio extractor is pinned to CPU in server.py
 
 # Ensure directories exist
 CACHE_DIR.mkdir(parents=True, exist_ok=True)

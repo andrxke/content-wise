@@ -1,5 +1,5 @@
 const SERVER_URL = "http://127.0.0.1:8000/analyze";
-const RECORDING_DURATION_MS = 10000; // 10 seconds
+const RECORDING_DURATION_MS = 5000; // 5 seconds — enough for cognitive state detection
 
 let isRecording = false;
 
@@ -18,6 +18,7 @@ function updateAlarm(interval) {
 chrome.runtime.onInstalled.addListener(() => {
   console.log("ContentWise installed. Defaulting to manual mode.");
   chrome.storage.local.set({ captureInterval: 'manual' });
+  chrome.action.setBadgeText({ text: "" });
 });
 
 chrome.storage.onChanged.addListener((changes) => {
@@ -26,7 +27,9 @@ chrome.storage.onChanged.addListener((changes) => {
   }
 });
 
-// Sync on startup 
+// Clear stale badge on every service-worker startup and restore alarm settings.
+// This prevents the "ERR" badge from a previous session persisting after Chrome restarts.
+chrome.action.setBadgeText({ text: "" });
 chrome.storage.local.get({ captureInterval: 'manual' }, (data) => {
   updateAlarm(data.captureInterval);
 });
@@ -38,7 +41,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
       console.log("Already recording, skipping this cycle.");
       return;
     }
-    await triggerCapture();
+    await triggerCapture("alarm");
   }
 });
 
@@ -52,8 +55,8 @@ async function ensureOffscreenDocument() {
   if (!offscreenDocument) {
     await chrome.offscreen.createDocument({
       url: 'offscreen.html',
-      reasons: ['USER_MEDIA'],
-      justification: 'Recording from chrome.tabCapture API'
+      reasons: ['USER_MEDIA', 'AUDIO_PLAYBACK'],
+      justification: 'Recording tab audio/video and playing audio back to user'
     });
   }
 }
@@ -61,7 +64,7 @@ async function ensureOffscreenDocument() {
 // Ensure the popup can manually trigger a capture
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "MANUAL_TRIGGER") {
-    triggerCapture().then(() => sendResponse({ status: "started" }));
+    triggerCapture("manual").then(() => sendResponse({ status: "started" }));
     return true;
   }
   if (message.type === "RECORDING_COMPLETE") {
@@ -72,8 +75,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // Start the capture process
-async function triggerCapture() {
-  console.log("Triggering capture...");
+// source: "manual" (user clicked REC) or "alarm" (periodic timer)
+async function triggerCapture(source = "manual") {
+  console.log(`Triggering capture (source=${source})...`);
   isRecording = true;
   chrome.action.setBadgeText({ text: "REC" });
   chrome.action.setBadgeBackgroundColor({ color: "#FF0000" });
@@ -83,19 +87,25 @@ async function triggerCapture() {
     if (!activeTab || activeTab.url.startsWith("chrome://")) {
       console.log("No active recording target allowed. Aborting silently.");
       isRecording = false;
+      chrome.action.setBadgeText({ text: "" });
       return;
     }
 
-    // This may prompt the user if they haven't granted tabCapture yet
-    // Note: tabCapture requires the user to click the extension icon at least once to grant activeTab privileges,
-    // unless you use desktopCapture. However, activeTab + periodic alarm might fail if activeTab expires.
-    // In Manifest V3, tabCapture.getMediaStreamId can be used to get a stream ID without a prompt IF we are currently active.
-
+    // tabCapture requires the user to have clicked the extension icon at least once
+    // to grant activeTab privileges. Alarm-triggered captures may fail if
+    // activeTab has expired — we handle that gracefully below.
     chrome.tabCapture.getMediaStreamId({ targetTabId: activeTab.id }, async (streamId) => {
       if (chrome.runtime.lastError || !streamId) {
         console.error("Failed to get MediaStreamId: ", chrome.runtime.lastError);
         isRecording = false;
-        chrome.action.setBadgeText({ text: "ERR" });
+        // Only show ERR badge for manual triggers — alarm failures are expected
+        // (e.g. after Chrome restart when activeTab hasn't been re-granted)
+        if (source === "manual") {
+          chrome.action.setBadgeText({ text: "ERR" });
+          chrome.action.setBadgeBackgroundColor({ color: "#FF0000" });
+        } else {
+          chrome.action.setBadgeText({ text: "" });
+        }
         return;
       }
 
@@ -114,7 +124,12 @@ async function triggerCapture() {
   } catch (err) {
     console.error("Capture error:", err);
     isRecording = false;
-    chrome.action.setBadgeText({ text: "ERR" });
+    if (source === "manual") {
+      chrome.action.setBadgeText({ text: "ERR" });
+      chrome.action.setBadgeBackgroundColor({ color: "#FF0000" });
+    } else {
+      chrome.action.setBadgeText({ text: "" });
+    }
   }
 }
 
@@ -132,6 +147,8 @@ async function handleRecordingComplete(dataUrl) {
     if (blob.size < 1000) {
       console.error("Captured blob is suspiciously small. Aborting.");
       chrome.action.setBadgeText({ text: "ERR" });
+      chrome.action.setBadgeBackgroundColor({ color: "#FF0000" });
+      showResultNotification(null, "Recording was too short or empty.");
       return;
     }
 
@@ -144,7 +161,8 @@ async function handleRecordingComplete(dataUrl) {
     });
 
     if (!analysisRes.ok) {
-      throw new Error("Server returned " + analysisRes.status);
+      const detail = await analysisRes.text().catch(() => "");
+      throw new Error(`Server returned ${analysisRes.status}: ${detail}`);
     }
 
     const analysisResult = await analysisRes.json();
@@ -172,9 +190,46 @@ async function handleRecordingComplete(dataUrl) {
       chrome.action.setBadgeBackgroundColor({ color: "#808080" });
     }
 
+    // Show a desktop notification so the user can see the result
+    showResultNotification(analysisResult);
+
   } catch (err) {
     console.error("Analysis error:", err);
     chrome.action.setBadgeText({ text: "ERR" });
     chrome.action.setBadgeBackgroundColor({ color: "#FF0000" });
+    showResultNotification(null, err.message);
   }
+}
+
+/**
+ * Show a Chrome notification with the analysis result (or an error message).
+ */
+function showResultNotification(result, errorMessage) {
+  if (errorMessage) {
+    chrome.notifications.create({
+      type: "basic",
+      iconUrl: "icons/icon128.png",
+      title: "ContentWise — Error",
+      message: errorMessage,
+      priority: 1
+    });
+    return;
+  }
+
+  const stateLabels = {
+    focused: "✓ Focused",
+    lured: "⚠ Lured",
+    distracted: "○ Distracted"
+  };
+  const title = stateLabels[result.focus_state] || result.focus_state;
+  const confidence = (result.confidence * 100).toFixed(1);
+  const regions = result.top_active_regions?.slice(0, 3).join(", ") || "N/A";
+
+  chrome.notifications.create({
+    type: "basic",
+    iconUrl: "icons/icon128.png",
+    title: `ContentWise: ${title}`,
+    message: `Confidence: ${confidence}%\nTop regions: ${regions}`,
+    priority: 1
+  });
 }
